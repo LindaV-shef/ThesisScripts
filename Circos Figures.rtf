@@ -1,0 +1,93 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2865
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 # Download hg38 cytobands\
+url <- "https://hgdownload.cse.ucsc.edu/goldenPath/hg38/database/cytoBand.txt.gz"\
+cyto_file <- tempfile(fileext = ".gz")\
+download.file(url, cyto_file)\
+\
+cyto <- read.table(cyto_file, sep = "\\t", stringsAsFactors = FALSE)\
+colnames(cyto) <- c("chr", "start", "end", "name", "gieStain")\
+\
+# Keep only standard chromosomes\
+cyto2 <- subset(cyto, chr %in% paste0("chr", c(1:22, "X", "Y")))\
+\
+# Keep required columns in correct order\
+cyto2 <- cyto2[, c("chr", "start", "end", "name", "gieStain")]\
+\
+# Sort\
+cyto2 <- cyto2[order(cyto2$chr, cyto2$start), ]\
+\
+chr_lengths <- aggregate(cyto2$end, by = list(cyto2$chr), FUN = max)\
+colnames(chr_lengths) <- c("chr", "chr_length")\
+\
+chr_delta_sts2 <- merge(chr_delta_sts, chr_lengths, by = "chr")\
+chr_delta_sts2$start <- 1\
+chr_delta_sts2$end   <- chr_delta_sts2$chr_length\
+chr_delta_sts2$mean_signal <- as.numeric(chr_delta_sts2$mean_signal)\
+\
+chr_delta_u2os2 <- merge(chr_delta_u2os, chr_lengths, by = "chr")\
+chr_delta_u2os2$start <- 1\
+chr_delta_u2os2$end   <- chr_delta_u2os2$chr_length\
+chr_delta_u2os2$mean_signal <- as.numeric(chr_delta_u2os2$mean_signal)\
+\
+sig_sts <- subset(res_sts_df,\
+                  padj < 0.05 & gene %in% stemness_genes_present)\
+\
+sig_sts$log2FoldChange <- as.numeric(sig_sts$log2FoldChange)\
+\
+sig_u2os <- subset(res_u2os_df,\
+                   padj < 0.05 & gene %in% stemness_genes_present)\
+\
+sig_u2os$log2FoldChange <- as.numeric(sig_u2os$log2FoldChange)\
+\
+circos.clear()\
+circos.par("track.height" = 0.1)\
+\
+circos.initializeWithIdeogram(cyto2)\
+\
+# Track 1: chromosome-level signal\
+circos.genomicTrack(chr_delta_sts2,\
+                    ylim = range(chr_delta_sts2$mean_signal, na.rm = TRUE),\
+                    panel.fun = function(region, value, ...) \{\
+                      circos.genomicRect(region, value,\
+                                         col = "black", border = NA, ...)\
+                    \})\
+\
+# Track 2: stemness DEGs\
+circos.genomicTrack(sig_sts,\
+                    ylim = range(sig_sts$log2FoldChange, na.rm = TRUE),\
+                    panel.fun = function(region, value, ...) \{\
+                      col <- ifelse(value$log2FoldChange > 0, "red", "blue")\
+                      circos.genomicPoints(region,\
+                                           value$log2FoldChange,\
+                                           col = col, pch = 16, ...)\
+                    \})\
+\
+circos.clear()\
+circos.par("track.height" = 0.1)\
+\
+circos.initializeWithIdeogram(cyto2)\
+\
+# Track 1: chromosome-level signal\
+circos.genomicTrack(chr_delta_u2os2,\
+                    ylim = range(chr_delta_u2os2$mean_signal, na.rm = TRUE),\
+                    panel.fun = function(region, value, ...) \{\
+                      circos.genomicRect(region, value,\
+                                         col = "black", border = NA, ...)\
+                    \})\
+\
+# Track 2: stemness DEGs\
+circos.genomicTrack(sig_u2os,\
+                    ylim = range(sig_u2os$log2FoldChange, na.rm = TRUE),\
+                    panel.fun = function(region, value, ...) \{\
+                      col <- ifelse(value$log2FoldChange > 0, "red", "blue")\
+                      circos.genomicPoints(region,\
+                                           value$log2FoldChange,\
+                                           col = col, pch = 16, ...)\
+                    \})\
+}
