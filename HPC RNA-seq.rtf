@@ -1,0 +1,92 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2865
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fnil\fcharset0 HelveticaNeue;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\deftab560
+\pard\pardeftab560\slleading20\partightenfactor0
+
+\f0\fs26 \cf0 /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/\
+\
+/mnt/parscratch/users/mbp21lv/RNA-seq-starvation/Trim/\
+\
+/mnt/parscratch/users/mbp21lv/RNA-seq-starvation/STARI/STS2011/STS2011-1/\
+\
+/mnt/parscratch/users/mbp21lv/RNA-seq-starvation/RSEMI/STS2011/STS2011-1/\
+\
+#!/bin/bash\
+#SBATCH --mem=8000\
+\
+# Load the modules required by our program\
+module load Anaconda3/2022.10\
+source activate genomics\
+cd /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/Samples\
+\
+# Run QC\
+fastqc STS2011-Linda-2_R1_001.fastq.gz\
+multiqc .\
+\
+fastqc STS2011-Linda-2_R2_001.fastq.gz\
+multiqc .\
+\
+fastqc STS2011-Linda-3_R1_001.fastq.gz\
+multiqc .\
+\
+fastqc STS2011-Linda-3_R2_001.fastq.gz\
+multiqc .\
+\
+fastqc STS2011-Linda-4_R1_001.fastq.gz\
+multiqc .\
+\
+fastqc STS2011-Linda-4_R2_001.fastq.gz\
+multiqc .\
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 #!/bin/bash\
+#SBATCH --mem=20G\
+\
+# Load the modules required by our program\
+module load Anaconda3/2022.10\
+source activate genomics\
+cd /mnt/parscratch/users/mbp21lv/RNA-seq-starvation\
+\
+# Run CUTADAPT\
+cutadapt -a GATCGGAAGAG -A GATCGGAAGAG -o STS2011-Linda-2_R1_001.fq.gz -p STS2011-Linda-2_R2_001.fq.gz /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/Samples/STS2011-Linda-2_R1_001.fastq.gz /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/Samples/STS2011-Linda-2_R2_001.fastq.gz -m 21\
+\
+cutadapt -a GATCGGAAGAG -A GATCGGAAGAG -o STS2011-Linda-3_R1_001.fq.gz -p STS2011-Linda-3_R2_001.fq.gz /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/Samples/STS2011-Linda-3_R1_001.fastq.gz /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/Samples/STS2011-Linda-3_R2_001.fastq.gz -m 21\
+\
+cutadapt -a GATCGGAAGAG -A GATCGGAAGAG -o STS2011-Linda-4_R1_001.fq.gz -p STS2011-Linda-4_R2_001.fq.gz /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/Samples/STS2011-Linda-4_R1_001.fastq.gz /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/Samples/STS2011-Linda-4_R2_001.fastq.gz -m 21\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 \
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 \
+STAR --runMode genomeGenerate --genomeDir /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/STARI --genomeFastaFiles /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/genome/GRCh38.p14.genome.fa --sjdbGTFfile /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/genome/gencode.v45.primary_assembly.annotation.gtf --sjdbOverhang 100\
+\
+STAR --runThreadN 8 \\\
+     --genomeDir /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/STARI \\\
+     --readFilesIn /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/Trim/STS2011-Linda-2_R1_001.fq.gz \\\
+                  /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/Trim/STS2011-Linda-2_R2_001.fq.gz \\\
+     --readFilesCommand zcat \\\
+     --outFileNamePrefix /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/STARI/STS2011/STS2011-1/ \\\
+     --outSAMtype BAM SortedByCoordinate \\\
+     --quantMode TranscriptomeSAM GeneCounts\
+\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+rsem-calculate-expression --bam --no-bam-output --paired-end --forward-prob 0.5 \\\
+/mnt/parscratch/users/mbp21lv/RNA-seq-starvation/STARI/STS2011/STS2011-1/Aligned.toTranscriptome.out.bam \\\
+/mnt/parscratch/users/mbp21lv/RNA-seq-starvation/RSEMI/Index \\\
+/mnt/parscratch/users/mbp21lv/RNA-seq-starvation/RSEMI/STS2011/STS2011-1/rsem \\\
+>& /mnt/parscratch/users/mbp21lv/RNA-seq-starvation/RSEMI/STS2011/STS2011-1/rsem.log\
+\
+\
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 srun --cpus-per-task=1 --mem=8G --pty bash -i\
+sbatch nf_submission.sh\
+tail -f nextflow.log }
