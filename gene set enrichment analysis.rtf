@@ -1,0 +1,79 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2865
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 # -----------------------------\
+# 1\uc0\u65039 \u8419  Load libraries\
+# -----------------------------\
+library(msigdbr)\
+library(GSVA)\
+library(pheatmap)\
+library(dplyr)\
+library(reshape2)\
+library(ggplot2)\
+\
+# -----------------------------\
+# 2\uc0\u65039 \u8419  Define stemness gene sets\
+# -----------------------------\
+\
+# Option 1: use curated MSigDB C2/C3 category\
+stem_sets <- msigdbr(species="Homo sapiens", category="C2")  # or "C3" for motif gene sets\
+# filter for relevant stemness sets\
+stem_sets <- stem_sets %>% filter(grepl("STEM|Pluri|ESC|PluriNet", gs_name, ignore.case=TRUE))\
+\
+# convert to list format for GSVA\
+gs <- split(stem_sets$gene_symbol, stem_sets$gs_name)\
+\
+# Option 2: custom gene lists (if you have them)\
+# gs <- list(\
+#   ESC_CORE = c("SOX2","NANOG","POU5F1","KLF4","MYC"),\
+#   PLURINET = c("ALDH1A1","CD44","PROM1",...)\
+# )\
+\
+# -----------------------------\
+# 3\uc0\u65039 \u8419  Run ssGSEA\
+# -----------------------------\
+ssgsea_scores <- gsva(as.matrix(logcpm), gs, method="ssgsea", ssgsea.norm=TRUE)\
+\
+# -----------------------------\
+# 4\uc0\u65039 \u8419  Visualize ssGSEA scores\
+# -----------------------------\
+# Ensure meta rownames match columns in logcpm\
+rownames(meta) <- meta$sample\
+\
+pheatmap(ssgsea_scores,\
+         annotation_col = meta[, c("cell_line","subtype"), drop=FALSE],\
+         scale = "row",\
+         color = colorRampPalette(c("navy","white","firebrick3"))(50),\
+         main = "Stemness ssGSEA Scores")\
+\
+# -----------------------------\
+# 5\uc0\u65039 \u8419  Compare ssGSEA scores across cell lines or subtypes\
+# -----------------------------\
+\
+# Melt for ggplot\
+ssgsea_df <- melt(ssgsea_scores)\
+colnames(ssgsea_df) <- c("GeneSet","sample","ssgsea_score")\
+ssgsea_df$cell_line <- meta[ssgsea_df$sample,"cell_line"]\
+ssgsea_df$subtype <- meta[ssgsea_df$sample,"subtype"]\
+\
+# Example: Kruskal-Wallis test per gene set across cell lines\
+kruskal_results <- ssgsea_df %>%\
+  group_by(GeneSet) %>%\
+  summarise(p_value = kruskal.test(ssgsea_score ~ cell_line)$p.value) %>%\
+  mutate(adj_p = p.adjust(p_value, method="BH"))\
+\
+write.csv(kruskal_results, "results/ssGSEA_Stemness_KW.csv", row.names=FALSE)\
+\
+# Optional: boxplot per gene set\
+ggplot(ssgsea_df, aes(x=cell_line, y=ssgsea_score)) +\
+  geom_boxplot() +\
+  facet_wrap(~GeneSet, scales="free_y") +\
+  theme_bw() +\
+  theme(axis.text.x = element_text(angle=45, hjust=1)) +\
+  ylab("ssGSEA Score") +\
+  xlab("Cell Line")\
+}

@@ -1,0 +1,145 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2865
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 suppressPackageStartupMessages(\{\
+  library(tidyverse)\
+  library(ggrepel)\
+\})\
+\
+# ---------- 1) RNA: mat_stemness -> long + infer metadata ----------\
+expr_long <- as.data.frame(mat_stemness) %>%\
+  rownames_to_column("gene") %>%\
+  pivot_longer(-gene, names_to = "sample_id", values_to = "expr") %>%\
+  mutate(\
+    cell_line = case_when(\
+      str_detect(sample_id, regex("sts2011|sts", ignore_case = TRUE)) ~ "STS2011",\
+      str_detect(sample_id, regex("u2os", ignore_case = TRUE)) ~ "U2OS",\
+      TRUE ~ NA_character_\
+    ),\
+    timepoint = case_when(\
+      str_detect(sample_id, regex("pre", ignore_case = TRUE)) ~ "pre",\
+      str_detect(sample_id, regex("post", ignore_case = TRUE)) ~ "post",\
+      TRUE ~ NA_character_\
+    )\
+  ) %>%\
+  filter(!is.na(cell_line), !is.na(timepoint))\
+\
+# ---------- 2) lpWGS standardiser (gene + AF/BAF or counts) ----------\
+standardise_lpwgs <- function(df, cell_line, timepoint) \{\
+  df <- as_tibble(df)\
+\
+  gene_col <- intersect(names(df), c("gene","Gene","SYMBOL","symbol","hgnc_symbol"))[1]\
+  if (is.na(gene_col)) stop("lpWGS table missing a gene column (gene/Gene/symbol/...).")\
+\
+  af_col <- intersect(names(df), c("baf","BAF","dna_af","af","alt_af","alt_fraction","VAF","vaf"))[1]\
+\
+  has_counts <- all(c("ref_count","alt_count") %in% names(df)) || all(c("ref","alt") %in% names(df))\
+  if (is.na(af_col) && !has_counts) \{\
+    stop("lpWGS needs AF/BAF column (baf/af/vaf/...) or ref+alt counts.")\
+  \}\
+\
+  out <- df %>%\
+    transmute(\
+      gene = .data[[gene_col]],\
+      dna_af = if (!is.na(af_col)) as.numeric(.data[[af_col]]) else \{\
+        if ("ref_count" %in% names(df)) as.numeric(alt_count) / (as.numeric(ref_count) + as.numeric(alt_count)) else\
+          as.numeric(alt) / (as.numeric(ref) + as.numeric(alt))\
+      \},\
+      dna_dp = if ("ref_count" %in% names(df)) as.numeric(ref_count) + as.numeric(alt_count) else\
+        if (all(c("ref","alt") %in% names(df))) as.numeric(ref) + as.numeric(alt) else NA_real_\
+    ) %>%\
+    filter(!is.na(gene), !is.na(dna_af)) %>%\
+    mutate(\
+      cell_line = cell_line,\
+      timepoint = timepoint,\
+      dna_imbalance = abs(dna_af - 0.5)\
+    )\
+\
+  out\
+\}\
+\
+# ---------- 3) Runner: do ONE cell line at a time ----------\
+run_cellline <- function(cell_line_name, lp_pre, lp_post, out_prefix = cell_line_name) \{\
+\
+  # RNA gene means within this cell line\
+  expr_gene <- expr_long %>%\
+    filter(cell_line == cell_line_name) %>%\
+    group_by(timepoint, gene) %>%\
+    summarise(expr_mean = mean(as.numeric(expr), na.rm = TRUE),\
+              n_rna = n(), .groups = "drop")\
+\
+  # lpWGS -> gene-level (aggregate if multiple sites per gene)\
+  lp_long <- bind_rows(\
+    standardise_lpwgs(lp_pre,  cell_line_name, "pre"),\
+    standardise_lpwgs(lp_post, cell_line_name, "post")\
+  )\
+\
+  lp_gene <- lp_long %>%\
+    group_by(timepoint, gene) %>%\
+    summarise(\
+      n_sites = n(),\
+      dna_af_w = if (all(is.na(dna_dp))) mean(dna_af, na.rm = TRUE) else weighted.mean(dna_af, w = pmax(dna_dp, 1), na.rm = TRUE),\
+      dna_imb_w = if (all(is.na(dna_dp))) mean(dna_imbalance, na.rm = TRUE) else weighted.mean(dna_imbalance, w = pmax(dna_dp, 1), na.rm = TRUE),\
+      .groups = "drop"\
+    )\
+\
+  merged <- expr_gene %>%\
+    inner_join(lp_gene, by = c("timepoint","gene"))\
+\
+  # delta post-pre\
+  delta <- merged %>%\
+    select(timepoint, gene, expr_mean, dna_imb_w) %>%\
+    pivot_wider(names_from = timepoint, values_from = c(expr_mean, dna_imb_w)) %>%\
+    mutate(\
+      d_expr = expr_mean_post - expr_mean_pre,\
+      d_imb  = dna_imb_w_post - dna_imb_w_pre\
+    ) %>%\
+    arrange(desc(abs(d_expr) + abs(d_imb)))\
+\
+  # ----- plots -----\
+  p1 <- ggplot(merged, aes(x = dna_imb_w, y = expr_mean)) +\
+    geom_point(alpha = 0.7) +\
+    facet_wrap(~ timepoint) +\
+    labs(\
+      title = paste0(cell_line_name, ": DNA allelic imbalance vs RNA stemness expression"),\
+      x = "DNA allelic imbalance |AF - 0.5|",\
+      y = "Mean RNA expression (mat_stemness)"\
+    ) +\
+    theme_bw()\
+\
+  top_lab <- delta %>% slice_max(order_by = abs(d_expr) + abs(d_imb), n = 12)\
+\
+  p2 <- ggplot(delta, aes(x = d_imb, y = d_expr)) +\
+    geom_hline(yintercept = 0, linetype = "dashed") +\
+    geom_vline(xintercept = 0, linetype = "dashed") +\
+    geom_point(alpha = 0.7) +\
+    geom_text_repel(data = top_lab, aes(label = gene), max.overlaps = 50) +\
+    labs(\
+      title = paste0(cell_line_name, ": starvation effect (post-pre) \uc0\u916 imbalance vs \u916 expression"),\
+      x = "\uc0\u916  DNA allelic imbalance (post - pre)",\
+      y = "\uc0\u916  RNA expression (post - pre)"\
+    ) +\
+    theme_bw()\
+\
+  # save outputs\
+  readr::write_csv(merged, paste0(out_prefix, "_merged_expr_imbalance.csv"))\
+  readr::write_csv(delta,  paste0(out_prefix, "_delta_post_pre.csv"))\
+\
+  list(merged = merged, delta = delta, p_imb_vs_expr = p1, p_delta = p2)\
+\}\
+\
+# ---------- 4) Run separately ----------\
+res_STS2011 <- run_cellline("STS2011", lp_pre = sts_pre, lp_post = sts_post, out_prefix = "STS2011")\
+res_U2OS    <- run_cellline("U2OS",    lp_pre = u2os_pre, lp_post = u2os_post, out_prefix = "U2OS")\
+\
+# View plots:\
+res_STS2011$p_imb_vs_expr\
+res_STS2011$p_delta\
+\
+res_U2OS$p_imb_vs_expr\
+res_U2OS$p_delta\
+}

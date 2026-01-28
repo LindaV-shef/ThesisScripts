@@ -1,0 +1,51 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2865
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 library(DESeq2)\
+\
+# Define file paths\
+files <- c("flask1.rsem.genes.results", "flask2.rsem.genes.results", "flask3.rsem.genes.results")\
+\
+# Read RSEM files and extract expected counts\
+read_rsem <- function(file) \{\
+  data <- read.delim(file, header = TRUE, stringsAsFactors = FALSE)\
+  counts <- data[, c("gene_id", "expected_count")]\
+  colnames(counts)[2] <- gsub(".rsem.genes.results", "", file)  # Name column based on file\
+  return(counts)\
+\}\
+\
+# Load and merge data\
+count_list <- lapply(files, read_rsem)\
+count_data <- Reduce(function(x, y) merge(x, y, by = "gene_id", all = TRUE), count_list)\
+rownames(count_data) <- count_data$gene_id\
+count_data <- count_data[, -1]  # Remove gene_id column\
+\
+# Create metadata (assuming all from same condition)\
+coldata <- data.frame(\
+  row.names = colnames(count_data),\
+  condition = factor(c("flask1", "flask2", "flask3"))\
+)\
+\
+# Create DESeq2 dataset\
+dds <- DESeqDataSetFromMatrix(countData = as.matrix(count_data), \
+                              colData = coldata, \
+                              design = ~ condition)\
+\
+# Run DESeq2\
+dds <- DESeq(dds)\
+\
+# Get results\
+res <- results(dds)\
+\
+# Save results\
+write.csv(as.data.frame(res), "deseq2_results.csv")\
+\
+# Plot MA plot\
+plotMA(res, main="DESeq2 MA Plot", ylim=c(-2,2))\
+\
+# Print summary\
+summary(res)}

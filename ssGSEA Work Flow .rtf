@@ -1,0 +1,81 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2865
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww29200\viewh15760\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 # Install required packages if not installed\
+ install.packages("GSVAdata\'94)\
+ install.packages("BiocManager")\
+ install.packages("pheatmap")\
+BiocManager::install("GSEABase")\
+\
+# Load libraries\
+library(GSVAdata)\
+library(GSEABase)\
+library(pheatmap)\
+library(ggplot2)\
+\
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")\
+BiocManager::install("biomaRt")\
+library(biomaRt)\
+\
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")  # For human genes\
+\
+ensembl_ids <- sub("\\\\..*", "", rownames(tpm_matrix))\
+\
+gene_mapping <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),\
+                      filters = "ensembl_gene_id",\
+                      values = ensembl_ids,\
+                      mart = ensembl)\
+\
+head(gene_mapping)  # Check the first few mappings\
+\
+tpm_matrix$ensembl_gene_id <- rownames(tpm_matrix)  # Add rownames as a column\
+\
+# Merge with gene mapping\
+tpm_matrix <- merge(tpm_matrix, gene_mapping, by = "ensembl_gene_id", all.x = TRUE)\
+\
+# Set rownames to gene symbols\
+rownames(tpm_matrix) <- tpm_matrix$hgnc_symbol\
+\
+# Remove unnecessary columns\
+tpm_matrix <- tpm_matrix[, !(names(tpm_matrix) %in% c("ensembl_gene_id", "hgnc_symbol"))]\
+\
+# Check the result\
+head(tpm_matrix)\
+\
+tpm_matrix <- tpm_matrix[!is.na(rownames(tpm_matrix)), ]\
+\
+\
+# Step 1: Load TPM data (CSV format)\
+tpm_data <- read.csv("your_tpm_data.csv", row.names = 1)  # Ensure genes are in rows, samples in columns\
+\
+# Step 2: Load ESCAPE gene sets (GMT format)\
+escape_gene_sets <- getGmt("ESCAPE_gene_sets.gmt")  # Replace with actual path to your ESCAPE file\
+\
+# Step 3\
+gsvaresults <- gsvaParam(tpm_matrix_imputed, escape_gene_sets, minSize = 10, maxSize = 500)\
+results <- gsva(gsvaresults)\
+\
+# Step 4: Normalize scores (optional but recommended)\
+ssgsea_scores <- scale(ssgsea_scores)  \
+\
+# Step 5: Visualize ssGSEA scores with a heatmap\
+pheatmap(ssgsea_scores, cluster_rows = TRUE, cluster_cols = TRUE, \
+         show_rownames = TRUE, show_colnames = TRUE, \
+         color = colorRampPalette(c("blue", "white", "red"))(50))\
+\
+# Step 6: Convert ssGSEA scores for boxplot visualization\
+ssgsea_long <- as.data.frame(t(ssgsea_scores))  # Transpose for plotting\
+ssgsea_long$Sample <- rownames(ssgsea_long)\
+ssgsea_melted <- reshape2::melt(ssgsea_long, id.vars = "Sample", variable.name = "Pathway", value.name = "Score")\
+\
+# Step 7: Create a boxplot of enrichment scores per pathway\
+ggplot(ssgsea_melted, aes(x = Pathway, y = Score, fill = Pathway)) +\
+  geom_boxplot() +\
+  theme_minimal() +\
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +\
+  labs(title = "ssGSEA ESCAPE Pathway Scores", y = "Enrichment Score")\
+}

@@ -1,0 +1,113 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2865
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 suppressPackageStartupMessages(\{\
+  library(tidyverse)\
+  library(GenomicRanges)\
+\})\
+\
+compute_fga <- function(gr, threshold = 0.25, baseline_fun = median) \{\
+  stopifnot(inherits(gr, "GRanges"))\
+  stopifnot("signal" %in% names(mcols(gr)))\
+\
+  sig <- as.numeric(mcols(gr)$signal)\
+  w   <- width(gr)\
+\
+  ok <- is.finite(sig) & is.finite(w) & w > 0\
+  sig <- sig[ok]\
+  w   <- w[ok]\
+\
+  baseline <- baseline_fun(sig)\
+\
+  altered <- abs(sig - baseline) > threshold\
+\
+  # fraction of covered genome length altered\
+  fga <- sum(w[altered]) / sum(w)\
+\
+  tibble(\
+    n_bins = length(sig),\
+    baseline = baseline,\
+    threshold = threshold,\
+    fga = fga,\
+    mean_abs_dev = weighted.mean(abs(sig - baseline), w = w)\
+  )\
+\}\
+\
+# output folder (you already set this earlier)\
+out_dir <- "lpWGS_stemness_figures"\
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)\
+\
+# pick a threshold (start here; adjust after looking at distributions)\
+thr <- 0.25\
+\
+fga_tbl <- bind_rows(\
+  compute_fga(sts_pre,  threshold = thr) %>% mutate(cell_line = "STS2011", timepoint = "pre"),\
+  compute_fga(sts_post, threshold = thr) %>% mutate(cell_line = "STS2011", timepoint = "post"),\
+  compute_fga(u2os_pre, threshold = thr) %>% mutate(cell_line = "U2OS",   timepoint = "pre"),\
+  compute_fga(u2os_post,threshold = thr) %>% mutate(cell_line = "U2OS",   timepoint = "post")\
+) %>%\
+  select(cell_line, timepoint, everything())\
+\
+write.csv(fga_tbl, file.path(out_dir, "lpWGS_FGA_table.csv"), row.names = FALSE)\
+fga_tbl\
+\
+p_fga <- ggplot(fga_tbl, aes(x = timepoint, y = fga)) +\
+  geom_point(size = 3) +\
+  geom_line(aes(group = 1)) +\
+  facet_wrap(~ cell_line) +\
+  theme_bw() +\
+  labs(\
+    title = paste0("Fraction of Genome Altered (FGA) from lpWGS signal (threshold = ", thr, ")"),\
+    x = NULL,\
+    y = "FGA (length-weighted fraction altered)"\
+  )\
+\
+ggsave(file.path(out_dir, "lpWGS_FGA_pre_post.png"), p_fga, width = 7, height = 4, dpi = 300)\
+p_fga\
+\
+gr_to_df <- function(gr, label) \{\
+  tibble(\
+    chr = as.character(seqnames(gr)),\
+    start = start(gr),\
+    end = end(gr),\
+    width = width(gr),\
+    signal = as.numeric(mcols(gr)$signal),\
+    label = label\
+  ) %>% filter(is.finite(signal), is.finite(width), width > 0)\
+\}\
+\
+sig_df <- bind_rows(\
+  gr_to_df(sts_pre,  "STS2011_pre"),\
+  gr_to_df(sts_post, "STS2011_post"),\
+  gr_to_df(u2os_pre, "U2OS_pre"),\
+  gr_to_df(u2os_post,"U2OS_post")\
+) %>%\
+  group_by(label) %>%\
+  mutate(baseline = median(signal)) %>%\
+  ungroup() %>%\
+  mutate(altered = abs(signal - baseline) > thr)\
+\
+p_hist <- ggplot(sig_df, aes(x = signal)) +\
+  geom_histogram(bins = 80) +\
+  facet_wrap(~ label, scales = "free_y") +\
+  theme_bw() +\
+  labs(title = "lpWGS signal distribution per condition", x = "signal", y = "bin count")\
+\
+ggsave(file.path(out_dir, "lpWGS_signal_histograms.png"), p_hist, width = 10, height = 6, dpi = 300)\
+\
+p_altered <- ggplot(sig_df, aes(x = signal)) +\
+  geom_histogram(bins = 80) +\
+  facet_wrap(~ label, scales = "free_y") +\
+  theme_bw() +\
+  labs(title = paste0("Altered bins defined as |signal - median| > ", thr),\
+       x = "signal", y = "bin count")\
+\
+ggsave(file.path(out_dir, "lpWGS_signal_histograms_thresholded.png"), p_altered,\
+       width = 10, height = 6, dpi = 300)\
+\
+p_hist\
+}
