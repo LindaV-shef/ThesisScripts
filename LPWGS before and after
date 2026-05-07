@@ -1,0 +1,213 @@
+############################################################
+## Genome-wide BedGraph analysis of nutritional depletion ##
+############################################################
+
+## Load required libraries
+library(data.table)
+library(GenomicRanges)
+library(IRanges)
+library(rtracklayer)
+library(ggplot2)
+library(msigdbr)
+library(dplyr)
+
+############################################################
+## 1. Load BedGraph files as GRanges objects              ##
+############################################################
+
+bg_to_gr <- function(path){
+  dt <- fread(path, header = FALSE, fill = TRUE, sep = "\t")
+
+  # If entire row was read into one column, split on tabs
+  if (ncol(dt) == 1) {
+    dt <- dt[, tstrsplit(V1, "\t", fixed = TRUE)]
+  }
+
+  # Keep bedGraph columns only
+  dt <- dt[, .(chr = V1, start = V2, end = V3, signal = V4)]
+
+  # Coerce and clean
+  dt[, start := suppressWarnings(as.integer(start))]
+  dt[, end   := suppressWarnings(as.integer(end))]
+  dt[, signal:= suppressWarnings(as.numeric(signal))]
+
+  dt <- dt[
+    grepl("^chr", chr) &
+    !is.na(start) & !is.na(end) & !is.na(signal) &
+    end > start
+  ]
+
+  GRanges(
+    seqnames = dt$chr,
+    ranges   = IRanges(start = dt$start + 1L, end = dt$end),
+    signal   = dt$signal
+  )
+}
+
+## Load BedGraph tracks
+sts_pre  <- bg_to_gr("STS2011.pre.mpileup.gz_ratio.BedGraph")
+sts_post <- bg_to_gr("STS2011.post.mpileup.gz_ratio.BedGraph")
+
+u2os_pre  <- bg_to_gr("U2OS.pre.mpileup.gz_ratio.BedGraph")
+u2os_post <- bg_to_gr("U2OS.post.mpileup.gz_ratio.BedGraph")
+
+############################################################
+## 2. Compute delta tracks (post − pre)                   ##
+############################################################
+
+gr_delta <- function(pre, post){
+  pre_dt  <- data.table(chr = as.character(seqnames(pre)),
+                        start = start(pre),
+                        end = end(pre),
+                        pre = pre$signal)
+
+  post_dt <- data.table(chr = as.character(seqnames(post)),
+                        start = start(post),
+                        end = end(post),
+                        post = post$signal)
+
+  setkey(pre_dt, chr, start, end)
+  setkey(post_dt, chr, start, end)
+
+  m <- merge(pre_dt, post_dt, by = c("chr","start","end"), all = TRUE)
+  m[is.na(pre),  pre  := 0]
+  m[is.na(post), post := 0]
+  m[, delta := post - pre]
+
+  GRanges(
+    seqnames = m$chr,
+    ranges   = IRanges(start = m$start, end = m$end),
+    signal   = m$delta
+  )
+}
+
+sts_delta  <- gr_delta(sts_pre, sts_post)
+u2os_delta <- gr_delta(u2os_pre, u2os_post)
+
+############################################################
+## 3. Genome-wide signal distributions                    ##
+############################################################
+
+plot_signal_density <- function(pre, post, title){
+  df <- rbind(
+    data.frame(signal = pre$signal, timepoint = "Pre"),
+    data.frame(signal = post$signal, timepoint = "Post")
+  )
+  ggplot(df, aes(x = signal, fill = timepoint)) +
+    geom_density(alpha = 0.4) +
+    theme_bw() +
+    labs(title = title, x = "BedGraph signal", y = "Density")
+}
+
+plot_signal_density(sts_pre, sts_post, "STS20/11 genome-wide signal (Pre vs Post)")
+plot_signal_density(u2os_pre, u2os_post, "U2OS genome-wide signal (Pre vs Post)")
+
+############################################################
+## 4. Chromosome-level weighted mean signal               ##
+############################################################
+
+chr_weighted_mean <- function(gr){
+  dt <- data.table(
+    chr = as.character(seqnames(gr)),
+    signal = gr$signal,
+    width = width(gr)
+  )
+  dt[, wsignal := signal * width]
+  dt[, .(mean_signal = sum(wsignal) / sum(width)), by = chr]
+}
+
+chr_delta_sts  <- chr_weighted_mean(sts_delta)
+chr_delta_u2os <- chr_weighted_mean(u2os_delta)
+
+############################################################
+## 5. Load gene annotation and define promoters           ##
+############################################################
+
+gtf <- import("gencode.v44.annotation.gtf")
+genes <- gtf[gtf$type == "gene"]
+
+# Remove BED score issues if exporting
+mcols(genes)$score <- NULL
+
+# Define promoters ±2 kb
+prom_2kb <- promoters(genes, upstream = 2000, downstream = 2000)
+
+############################################################
+## 6. Promoter-level weighted mean signal                 ##
+############################################################
+
+weighted_mean_signal <- function(query_gr, signal_gr){
+  hits <- findOverlaps(query_gr, signal_gr)
+  if (length(hits) == 0) return(numeric(0))
+
+  qh <- queryHits(hits)
+  sh <- subjectHits(hits)
+
+  w <- width(pintersect(query_gr[qh], signal_gr[sh]))
+  v <- signal_gr$signal[sh]
+
+  tapply(w * v, qh, sum) / tapply(w, qh, sum)
+}
+
+############################################################
+## 7. Pathway gene sets (KEGG + Reactome)                 ##
+############################################################
+
+# KEGG (MAPK, OXPHOS)
+kegg <- msigdbr(
+  species = "Homo sapiens",
+  collection = "C2",
+  subcollection = "CP:KEGG_LEGACY"
+)
+
+mapk_genes <- kegg %>%
+  filter(gs_name == "KEGG_MAPK_SIGNALING_PATHWAY") %>%
+  pull(gene_symbol) %>% unique()
+
+oxphos_genes <- kegg %>%
+  filter(gs_name == "KEGG_OXIDATIVE_PHOSPHORYLATION") %>%
+  pull(gene_symbol) %>% unique()
+
+# Reactome (PI3K–Akt)
+reactome <- msigdbr(
+  species = "Homo sapiens",
+  collection = "C2",
+  subcollection = "CP:REACTOME"
+)
+
+pi3k_genes <- reactome %>%
+  filter(gs_name == "REACTOME_PI3K_AKT_ACTIVATION") %>%
+  pull(gene_symbol) %>% unique()
+
+############################################################
+## 8. Pathway promoter delta signal                       ##
+############################################################
+
+pathway_promoter_delta <- function(gene_symbols, delta_track){
+  gr <- genes[mcols(genes)$gene_name %in% gene_symbols]
+  pr <- promoters(gr, upstream = 2000, downstream = 2000)
+  weighted_mean_signal(pr, delta_track)
+}
+
+sts_mapk_delta   <- pathway_promoter_delta(mapk_genes, sts_delta)
+sts_oxphos_delta <- pathway_promoter_delta(oxphos_genes, sts_delta)
+sts_pi3k_delta   <- pathway_promoter_delta(pi3k_genes, sts_delta)
+
+############################################################
+## 9. Plot pathway-level promoter deltas                  ##
+############################################################
+
+plot_path_delta <- function(delta_vec, title){
+  df <- data.frame(delta = as.numeric(delta_vec))
+  df <- df[is.finite(df$delta), ]
+  ggplot(df, aes(x = delta)) +
+    geom_density() +
+    theme_bw() +
+    labs(title = title,
+         x = "Post − Pre promoter signal",
+         y = "Density")
+}
+
+plot_path_delta(sts_mapk_delta,   "STS20/11: MAPK pathway promoter delta")
+plot_path_delta(sts_oxphos_delta, "STS20/11: OXPHOS pathway promoter delta")
+plot_path_delta(sts_pi3k_delta,   "STS20/11: PI3K–Akt pathway promoter delta")
