@@ -1,8 +1,5 @@
  library(DESeq2)
 \
-# Define file paths\
-files <- c("flask1.rsem.genes.results", "flask2.rsem.genes.results", "flask3.rsem.genes.results")\
-\
 # Read RSEM files and extract expected counts\
 read_rsem <- function(file) \{\
   data <- read.delim(file, header = TRUE, stringsAsFactors = FALSE)\
