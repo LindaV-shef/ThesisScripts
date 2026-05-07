@@ -14,7 +14,7 @@ count_data <- Reduce(function(x, y) merge(x, y, by = "gene_id", all = TRUE), cou
 rownames(count_data) <- count_data$gene_id\
 count_data <- count_data[, -1]  # Remove gene_id column\
 \
-# Create metadata (assuming all from same condition)\
+# Create metadata\
 coldata <- data.frame(\
   row.names = colnames(count_data),\
   condition = factor(c("flask1", "flask2", "flask3"))\
